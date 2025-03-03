@@ -1,5 +1,9 @@
 import paho.mqtt.client as mqtt
 from fastapi import FastAPI
+from mqtt_client import mqtt_client
+from database.client import write_api
+from mqtt_client import mqtt_thread
+
 
 app = FastAPI()
 
