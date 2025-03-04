@@ -1,53 +1,10 @@
 import paho.mqtt.client as mqtt
 from fastapi import FastAPI, HTTPException
-from influxdb_client import InfluxDBClient, Point, WritePrecision
 import json
 import threading
 import logging
+from mqtt_client import  influx_client, influxdb_bucket
 
-# Configuration InfluxDB
-influxdb_url = "http://localhost:8086"
-influxdb_token = "LiahQVPt9eklAQO_DZxIwxGmPdhXypgtg576i08-MEdGJ79xtEmOrqh0EYOe4U3-H0-MuZ8_hnjrcpijM7ONhw=="
-influxdb_org = "SmartSensorHub"
-influxdb_bucket = "my_data"
-
-# Initialisation du client InfluxDB
-influx_client = InfluxDBClient(url=influxdb_url, token=influxdb_token, org=influxdb_org)
-write_api = influx_client.write_api(write_options=WritePrecision.NS)
-
-# Configuration du client MQTT
-mqtt_broker = "localhost"
-mqtt_port = 1884
-mqtt_topic = "sensor/data"
-
-# Initialisation du client MQTT
-client = mqtt.Client()
-
-# Fonction de traitement des messages MQTT
-def on_message(client, userdata, msg):
-    try:
-        payload = msg.payload.decode()
-        data = json.loads(payload)
-        point = Point("sensor_data") \
-            .tag("device", data.get("device", "unknown")) \
-            .field("temperature", data.get("temperature", None)) \
-            .field("humidity", data.get("humidity", None))
-        write_api.write(bucket=influxdb_bucket, record=point)
-        logging.info(f"Message traité et écrit dans InfluxDB: {data}")
-    except Exception as e:
-        logging.error(f"Erreur lors du traitement du message: {e}")
-
-client.on_message = on_message
-client.connect(mqtt_broker, mqtt_port)
-client.subscribe(mqtt_topic)
-
-# Fonction pour faire tourner la boucle MQTT dans un thread séparé
-def mqtt_loop():
-    client.loop_forever()
-
-mqtt_thread = threading.Thread(target=mqtt_loop)
-mqtt_thread.daemon = True
-mqtt_thread.start()
 
 # Initialisation de FastAPI
 app = FastAPI()
@@ -61,17 +18,32 @@ def read_root():
 @app.get("/data/latest")
 def get_latest_data():
     try:
-        query = f'from(bucket: "{influxdb_bucket}") |> range(start: -1h) |> last()'
+        query = f'''
+        from(bucket: "{influxdb_bucket}") 
+        |> range(start: -1h) 
+        |> filter(fn: (r) => r._measurement == "sensor_data") 
+        |> last()
+        '''
         tables = influx_client.query_api().query(query)
-        if tables:
-            for record in tables[0].records:
-                return {
-                    "device": record.values.get("device"),
-                    "temperature": record.values.get("temperature"),
-                    "humidity": record.values.get("humidity"),
-                    "time": record.values.get("_time")
-                }
-        else:
+
+        data = {"device": None, "temperature": None, "humidity": None, "time": None}
+
+        for table in tables:
+            for record in table.records:
+                if record.get_field() == "temperature":
+                    data["temperature"] = record.values.get("_value")
+                elif record.get_field() == "humidity":
+                    data["humidity"] = record.values.get("_value")
+                if data["device"] is None:
+                    data["device"] = record.values.get("device")
+                if data["time"] is None:
+                    data["time"] = record.values.get("_time")
+
+        if data["temperature"] is None and data["humidity"] is None:
             raise HTTPException(status_code=404, detail="Aucune donnée trouvée")
+
+        return data
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Erreur lors de la récupération des données: {e}")
+
