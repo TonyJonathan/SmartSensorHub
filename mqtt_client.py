@@ -24,8 +24,8 @@ def on_message(client, userdata, msg):
     data = json.loads(payload)
     point = Point("sensor_data") \
         .tag("device", data.get("device")) \
-        .field("temperature", data.get("temperature")) \
-        .field("humidity", data.get("humidity"))
+        .field("temperature", float(data.get("temperature"))) \
+        .field("humidity", float(data.get("humidity")))
     write_api.write(bucket=influxdb_bucket, record=point)
 
 # Initialisation du client MQTT
